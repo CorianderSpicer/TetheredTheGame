@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0d1424">
+<title>TETHERED</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 40%22%3E%3Crect x=%224%22 y=%224%22 width=%2234%22 height=%2232%22 rx=%2216%22 fill=%22none%22 stroke=%22%23ffd978%22 stroke-width=%228%22/%3E%3Crect x=%2226%22 y=%224%22 width=%2234%22 height=%2232%22 rx=%2216%22 fill=%22none%22 stroke=%22white%22 stroke-width=%228%22/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+<script src="peerjs.min.js"></script>
+<script src="qrcode.js"></script>
+<script src="jsQR.js"></script>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<!-- ═════ MENUS ═════ -->
+<div id="ui">
+  <section id="title" class="screen">
+    <div class="logo"><div class="mark"><span></span><span></span></div><h1>TETHERED</h1><p>Two players. One chain. One way up.</p></div>
+    <nav class="menu">
+      <button data-go="local" class="primary">Play Together<small>same screen · keyboard / gamepads</small></button>
+      <button data-go="host">Host Game<small>online · get a room code</small></button>
+      <button data-go="join">Join Game<small>online · enter a room code</small></button>
+      <button data-go="continue">Continue Game<small id="contSub">resume a saved climb</small></button>
+      <button data-act="loadfile">Load Save File<small>import a .json save</small></button>
+      <div class="row"><button data-go="custom">Customize</button><button data-go="settings">Settings</button><button data-go="credits">Credits</button></div>
+    </nav>
+    <div class="foot" id="titleFoot"></div>
+  </section>
+
+  <section id="local" class="screen panel hidden">
+    <header><button class="back" data-go="title">‹</button><h2>Play Together <small>same screen</small></h2></header>
+    <div class="grid2">
+      <div class="card pcard" id="lp0"></div>
+      <div class="card pcard" id="lp1"></div>
+    </div>
+    <div class="card" id="localSettings"></div>
+    <div class="card keys"><b>Player 1</b> WASD move · Mouse look · Space jump · Shift sprint · E interact/reel &nbsp; <b>Player 2</b> Arrows · Enter jump · Right Shift sprint · / interact &nbsp; <b>Gamepads</b> stick move · A jump · X interact · B sprint · right stick look</div>
+    <div class="actions"><button class="primary big" id="localStart">Start Climb</button></div>
+  </section>
+
+  <section id="host" class="screen panel hidden">
+    <header><button class="back" data-act="leaveLobby">‹</button><h2>Host Game</h2></header>
+    <div id="resumeBox" class="card resume hidden"></div>
+    <div class="grid2">
+      <div class="card">
+        <div class="lbl">Room code</div>
+        <div class="code" id="roomCode">·····</div>
+        <div class="btns"><button id="copyCode">Copy code</button><button id="toggleManual">Manual / QR invite</button></div>
+        <div id="manualHost" class="hidden">
+          <p class="small">No internet signalling? Share this invite (copy or QR). Your partner pastes it into <b>Join › Manual code</b> and sends back an answer code.</p>
+          <div class="qr" id="hostQR"></div><textarea id="offerText" readonly rows="3"></textarea>
+          <div class="btns"><button id="copyOffer">Copy invite</button><button id="newOffer">New invite</button></div>
+          <textarea id="answerText" rows="3" placeholder="Paste your partner's answer code here"></textarea><button id="acceptAnswer">Connect</button>
+        </div>
+        <div class="status" id="hostStatus">Creating room…</div>
+      </div>
+      <div class="card"><div class="lbl">Players</div><div id="hostSlots" class="slots"></div><div id="hostMe"></div></div>
+    </div>
+    <div class="card" id="hostSettings"></div>
+    <div class="actions"><button class="primary big" id="hostStart" disabled>Waiting for player 2…</button></div>
+  </section>
+
+  <section id="join" class="screen panel hidden">
+    <header><button class="back" data-act="leaveLobby">‹</button><h2>Join Game</h2></header>
+    <div class="grid2">
+      <div class="card" id="joinMe"></div>
+      <div class="card">
+        <div class="lbl">Room code</div>
+        <input id="joinCode" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCDE">
+        <div class="btns"><button class="primary" id="joinGo">Join</button><button id="toggleManualJoin">Manual code</button></div>
+        <div id="manualJoin" class="hidden">
+          <textarea id="inviteText" rows="3" placeholder="Paste the host's invite code"></textarea>
+          <div class="btns"><button id="answerGo">Create answer</button><button id="scanGo">Scan QR</button></div>
+          <video id="scanVideo" class="hidden" muted playsinline></video>
+          <div class="qr" id="joinQR"></div><textarea id="answerOut" readonly rows="3" class="hidden"></textarea><button id="copyAnswer" class="hidden">Copy answer</button>
+        </div>
+        <div class="status" id="joinStatus"></div>
+      </div>
+    </div>
+    <div class="card hidden" id="joinLobby"><div class="lbl">Lobby</div><div id="joinSlots" class="slots"></div><div id="joinSettings" class="small"></div><div class="actions"><button class="primary big" id="readyBtn">Ready</button></div></div>
+  </section>
+
+  <section id="continue" class="screen panel hidden">
+    <header><button class="back" data-go="title">‹</button><h2>Continue Game</h2></header>
+    <p class="small">Recovery snapshots are saved automatically in this browser (every 30 s, at checkpoints, when leaving, and when a partner disconnects). Resuming creates a <b>new room</b> — your partner joins again with the new code.</p>
+    <div id="saveList" class="saves"></div>
+    <div class="btns"><button data-act="loadfile">Load Save File…</button><button id="openLinked" class="hidden">Open linked save file</button></div>
+  </section>
+
+  <section id="settings" class="screen panel hidden">
+    <header><button class="back" data-act="settingsBack">‹</button><h2>Settings</h2></header>
+    <div class="grid2">
+      <div class="card" id="setGfx"></div>
+      <div class="card" id="setAudio"></div>
+      <div class="card" id="setControls"></div>
+      <div class="card" id="setNet"></div>
+    </div>
+  </section>
+
+  <section id="custom" class="screen panel hidden">
+    <header><button class="back" data-go="title">‹</button><h2>Customize &amp; Records</h2></header>
+    <div class="grid2"><div class="card" id="custLook"></div><div class="card" id="custRecords"></div><div class="card" id="custChallenges"></div><div class="card" id="custRelics"></div></div>
+  </section>
+
+  <section id="credits" class="screen panel hidden">
+    <header><button class="back" data-go="title">‹</button><h2>Credits</h2></header>
+    <div class="card prose">
+      <p><b>TETHERED</b> — an original co-op climbing game. Design, code, models, textures and sound are generated procedurally for this project; there are no third-party art or audio assets.</p>
+      <p>Built with <b>three.js</b> (MIT) for rendering and <b>PeerJS</b> (MIT) for WebRTC connections. QR codes: <b>qrcode-generator</b> (MIT) and <b>jsQR</b> (Apache-2.0). Fonts: <b>Outfit</b> and <b>Space Grotesk</b> (SIL Open Font License).</p>
+      <p>Inspired by the genre of chained co-op climbers. All levels, characters, mechanics and names here are original.</p>
+    </div>
+  </section>
+
+  <section id="results" class="screen panel hidden">
+    <h2 class="center">Summit reached!</h2>
+    <div class="card" id="resBody"></div>
+    <div class="actions"><button id="resRecord">Download run record</button><button id="resAgain" class="primary">Play again</button><button id="resMenu">Main menu</button></div>
+  </section>
+</div>
+
+<!-- ═════ HUD ═════ -->
+<div id="hud" class="hidden">
+  <div class="tl">
+    <div class="names"><span id="hName0"></span><span class="link">⛓</span><span id="hName1"></span></div>
+    <div id="hTen" class="ten"><div class="bar"><div id="hTenBar"></div></div><span id="hTenTxt">Slack</span><span class="len"></span></div>
+    <div id="hConn" class="conn"></div>
+  </div>
+  <div class="tr"><div id="hTime" class="time">0:00.00</div><div id="hMode" class="mode"></div><div id="hFalls" class="falls"></div><div id="hRelics" class="relics"></div><div id="hSave" class="saveinfo"></div></div>
+  <div class="bl"><div id="hZone" class="zone"></div><div id="hAlt" class="alt">0 m</div><div id="hAltMax" class="altmax"></div><div id="hCps" class="cps"></div></div>
+  <div id="hPrompt" class="prompt"></div>
+  <div id="hHint" class="hint"></div>
+  <div id="hRescue" class="rescue"></div>
+  <div id="hBanner" class="banner"></div>
+  <div id="hToasts" class="toasts"></div>
+  <div id="hFall" class="fall"></div>
+  <div id="hWhite" class="white"></div>
+  <div id="hLabels"></div>
+  <div class="vignette"></div>
+  <div id="touch" class="touch hidden">
+    <div id="stick"><div id="knob"></div></div>
+    <button id="tUse">E</button><button id="tSprint">⇧</button><button id="tJump">⤒</button><button id="tPause">❚❚</button>
+  </div>
+</div>
+
+<div id="pause" class="overlay hidden"><div class="card dialog">
+  <h2>Paused</h2><p class="small" id="pauseNote"></p>
+  <div class="vmenu" id="pauseMenu"></div>
+</div></div>
+<div id="waiting" class="overlay hidden"><div class="card dialog"><h2 id="waitTitle">Partner disconnected</h2><p id="waitText"></p><div class="vmenu" id="waitMenu"></div></div></div>
+<div id="confirm" class="overlay hidden"><div class="card dialog"><p id="confirmText"></p><div class="btns"><button id="confirmNo">Cancel</button><button id="confirmOk" class="primary">OK</button></div></div></div>
+<div id="settingsOverlay" class="overlay hidden"></div>
+<input type="file" id="fileIn" accept=".json,application/json" hidden>
+<div id="toastRoot" class="toasts menuToasts"></div>
+<noscript>TETHERED needs JavaScript and WebGL.</noscript>
+<script type="module" src="main.js"></script>
+</body>
+</html>
