@@ -22,7 +22,8 @@ export class Renderer {
     this.fog = this.scene.fog = new THREE.Fog(0xffffff, 60, 330);
     this.boxMeshes = new Map(); this.fx = []; this.t = 0; this.mixPal = PAL[0].map(C);
     this.sky(); this.lights(); this.envMap(); this.world(); this.massif(); this.decor(); this.dynamics(); this.markers(); this.particles();
-    this.chars = [new Climber(opts.p1 || {}), new Climber(opts.p2 || {})]; for (const c of this.chars) { this.scene.add(c.root); this.scene.add(c.blob); }
+    const party = opts.party && opts.party.length ? opts.party : [opts.p1 || {}, opts.p2 || {}];
+    this.chars = party.map(o => new Climber(o || {})); for (const c of this.chars) { this.scene.add(c.root); this.scene.add(c.blob); }
     this.chainMesh(opts.chainStyle || 'steel'); this.resize();
   }
   setQuality(q) { this.q = q; const pr = Math.min(window.devicePixelRatio || 1, q === 'high' ? 2 : q === 'medium' ? 1.25 : 0.8); this.r.setPixelRatio(pr); this.r.shadowMap.enabled = q !== 'low'; this.sun.castShadow = q !== 'low';
@@ -101,7 +102,7 @@ export class Renderer {
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sc = v3(), ps = v3();
     for (const [k, arr] of Object.entries(list)) { const [g, mat] = kinds[k]; const im = new THREE.InstancedMesh(g, mat, arr.length); arr.forEach((a, i) => { e.set(a[7], a[6], 0); q.setFromEuler(e); m4.compose(ps.set(a[0], a[1], a[2]), q, sc.set(a[3], a[4], a[5])); im.setMatrixAt(i, m4); }); im.castShadow = false; im.receiveShadow = true; G.add(im); }
     // cloud sea under the temple
-    const cg = new THREE.BufferGeometry(), cp = [], cy = this.L.zones[4].y0 - 9; for (let i = 0; i < (this.q === 'low' ? 160 : 380); i++) { const a = rnd() * Math.PI * 2, d = 20 + rnd() * 320; cp.push(this.center.x + Math.cos(a) * d, cy + rnd() * 6 - 3, this.center.z + Math.sin(a) * d); }
+    const cg = new THREE.BufferGeometry(), cp = [], cy = (this.L.zones[this.L.zones.length - 1] || this.L.zones[0]).y0 - 9; for (let i = 0; i < (this.q === 'low' ? 160 : 380); i++) { const a = rnd() * Math.PI * 2, d = 20 + rnd() * 320; cp.push(this.center.x + Math.cos(a) * d, cy + rnd() * 6 - 3, this.center.z + Math.sin(a) * d); }
     cg.setAttribute('position', new THREE.Float32BufferAttribute(cp, 3)); const clouds = new THREE.Points(cg, new THREE.PointsMaterial({ map: tex('cloud'), size: 46, transparent: true, depthWrite: false, opacity: 0.85, color: '#fff6ee', sizeAttenuation: true })); this.scene.add(clouds);
     // flags show the wind
     this.flags = []; const fm = new THREE.MeshStandardMaterial({ map: tex('flag'), color: '#ff5d5d', side: THREE.DoubleSide, roughness: 0.8 }), pm = new THREE.MeshStandardMaterial({ color: '#5a4a3a' });
@@ -174,26 +175,29 @@ export class Renderer {
     for (const m of this.marks) { m.s.position.y = m.base + Math.sin(this.t * 2 + m.base) * 0.15; const d = this.cam.position.distanceTo(m.s.position); m.s.material.opacity = d < 30 ? 1 : Math.max(0, 1 - (d - 30) / 20); m.s.visible = m.s.material.opacity > 0.01 && !(m.o.type === 'plates' && m.o.open); }
     for (const a of this.anchorRings) a.ring.rotation.y += dt * 1.5;
     // checkpoints
-    this.cpMeshes.forEach((m, i) => { const on = view.cpReached?.has(i), cur = view.cp === i; m.flag.material.color.set(on ? ZONES[L.cps[i].zone].color : '#8a8a8a'); m.flag.material.emissive.set(cur ? '#553300' : '#000'); m.ring.material.opacity = cur ? 0.5 + 0.2 * Math.sin(this.t * 3) : on ? 0.28 : 0.15;
+    this.cpMeshes.forEach((m, i) => { const on = view.cpReached?.has(i), cur = view.cp === i; m.flag.material.color.set(on ? (L.zones[L.cps[i].zone]?.color || '#ffd978') : '#8a8a8a'); m.flag.material.emissive.set(cur ? '#553300' : '#000'); m.ring.material.opacity = cur ? 0.5 + 0.2 * Math.sin(this.t * 3) : on ? 0.28 : 0.15;
       const p = m.flag.geometry.attributes.position; for (let k = 0; k < p.count; k++) { const x = m.base[k * 3]; p.setZ(k, Math.sin(x * 4 - this.t * 6) * 0.08 * x); } p.needsUpdate = true; });
     this.relicMeshes.forEach((m, i) => { m.visible = !view.relics?.has(L.relics[i].id); m.rotation.y += dt * 2; m.position.y = L.relics[i].pos.y + Math.sin(this.t * 2 + i) * 0.15; });
     for (const f of this.flags) { const s = f.w.strength(view.t); const ang = Math.atan2(-f.w.dir.z, f.w.dir.x); f.fl.rotation.y = ang; const p = f.fl.geometry.attributes.position; for (let k = 0; k < p.count; k++) { const x = f.base[k * 3]; p.setZ(k, Math.sin(x * 5 - this.t * (4 + s)) * 0.06 * x * (1 + s * 0.15)); p.setY(k, f.base[k * 3 + 1] - x * Math.max(0, 0.5 - s * 0.05)); } p.needsUpdate = true; }
     this.bellMesh.rotation.z = view.state === 'victory' ? Math.sin(this.t * 5) * 0.35 : Math.sin(this.t * 0.8) * 0.03;
     // players
     const ten = view.chain?.tension || 0;
-    view.players.forEach((pl, i) => { const ch = this.chars[i]; ch.update(pl, dt, { tension: ten, groundY: view.groundY?.[i] }); ch.root.visible = true; });
-    // chain links along the rope
-    this.drawChain(view.rope, ten, view.chain?.state);
+    view.players.forEach((pl, i) => { const ch = this.chars[i]; if (!ch) return; ch.update(pl, dt, { tension: ten, groundY: view.groundY?.[i] }); ch.root.visible = true; });
+    for (let i = view.players.length; i < this.chars.length; i++) { this.chars[i].root.visible = false; this.chars[i].blob.visible = false; }
+    // chain links along every rope in the line (one per linked pair)
+    if (view.ropes && view.ropes.length) { let n = 0; for (const r of view.ropes) n = this.drawChain(r, ten, view.chain?.state, n); this.links.count = n; }
+    else this.drawChain(view.rope, ten, view.chain?.state);
     // particles
     for (let i = 0; i < this.pN; i++) { if (this.pl[i] <= 0) { this.pp[i * 3 + 1] = -9999; continue; } this.pl[i] -= dt; this.pv[i * 3 + 1] -= 9 * dt; this.pp[i * 3] += this.pv[i * 3] * dt; this.pp[i * 3 + 1] += this.pv[i * 3 + 1] * dt; this.pp[i * 3 + 2] += this.pv[i * 3 + 2] * dt; const k = Math.max(0, Math.min(1, this.pl[i])); this.pc[i * 3] *= 0.985; this.pc[i * 3 + 1] *= 0.985; this.pc[i * 3 + 2] *= 0.985; if (k <= 0) this.pp[i * 3 + 1] = -9999; }
     this.pts.geometry.attributes.position.needsUpdate = true; this.pts.geometry.attributes.color.needsUpdate = true;
     this.ambient(view, dt); this.atmosphere(view, dt);
   }
-  drawChain(rope, ten, state) {
-    const im = this.links; if (!rope) { im.count = 0; return; } const pts = rope.p, seg = 0.2; let n = 0, carry = 0; const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = v3(), a = v3(), b = v3(), d = v3(), z = v3(0, 0, 1), sc = v3(1, 1, 1), r = new THREE.Quaternion(), X = v3(0, 0, 1);
+  drawChain(rope, ten, state, startAt) {
+    const append = startAt !== undefined; const im = this.links; if (!rope) { if (!append) im.count = 0; return startAt || 0; } const pts = rope.p, seg = 0.2; let n = startAt || 0, carry = 0; const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = v3(), a = v3(), b = v3(), d = v3(), z = v3(0, 0, 1), sc = v3(1, 1, 1), r = new THREE.Quaternion(), X = v3(0, 0, 1);
     for (let i = 0; i < pts.length - 1 && n < 80; i++) { a.set(pts[i].x, pts[i].y, pts[i].z); b.set(pts[i + 1].x, pts[i + 1].y, pts[i + 1].z); d.subVectors(b, a); const len = d.length(); if (len < 1e-4) continue; d.divideScalar(len); q.setFromUnitVectors(z, d);
       let s = carry; while (s < len && n < 80) { up.copy(a).addScaledVector(d, s); r.setFromAxisAngle(X, (n % 2) * Math.PI / 2); const qq = q.clone().multiply(r); m4.compose(up, qq, sc); im.setMatrixAt(n++, m4); s += seg; } carry = s - len; }
-    im.count = n; im.instanceMatrix.needsUpdate = true; const hot = Math.max(0, ten - 0.75) * 4; this.linkMat.emissive.set(hot > 0.05 ? '#ff3020' : this.chainStyle.glow ? this.chainStyle.color : '#000'); this.linkMat.emissiveIntensity = hot > 0.05 ? Math.min(1.2, hot) * (0.6 + 0.4 * Math.sin(this.t * 20)) : this.chainStyle.glow ? 0.6 : 0;
+    if (!append) im.count = n; im.instanceMatrix.needsUpdate = true; const hot = Math.max(0, ten - 0.75) * 4; this.linkMat.emissive.set(hot > 0.05 ? '#ff3020' : this.chainStyle.glow ? this.chainStyle.color : '#000'); this.linkMat.emissiveIntensity = hot > 0.05 ? Math.min(1.2, hot) * (0.6 + 0.4 * Math.sin(this.t * 20)) : this.chainStyle.glow ? 0.6 : 0;
+    return n;
   }
   ambient(view, dt) {
     const z = view.zone ?? 0, c = this.cam.position, a = this.ap, N = a.length / 3; const fall = z === 3 ? 2.2 : z === 4 ? -0.15 : z === 2 ? 0.6 : 0.25, drift = z === 1 ? -3 : 0.3; const col = ['#fff1c8', '#ffffff', '#ffb070', '#ffffff', '#ffe6a8'][z];

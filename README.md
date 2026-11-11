@@ -1,8 +1,18 @@
 # TETHERED
 
-*Two players. One chain. One way up.*
+*Two to four players. One chain. One way up.*
 
-TETHERED is an original two-player co-op climbing platformer for the browser. Two stylized climbers are chained together and climb a spiral mountain through five zones to ring the summit bell. You can play on one screen or online over WebRTC.
+TETHERED is an original co-op climbing platformer for the browser. Two, three or four stylized climbers are roped together in a line and climb to ring the summit bell. You can play on one screen or online over WebRTC.
+
+**Three separate levels**, picked from the menu before you start. Each is its own mountain with its own base camp and its own bell — not one continuous run:
+
+| Level | Difficulty | What it is |
+|---|---|---|
+| **The Ascent** | ★ | The original climb: five zones, base camp to the sky temple. ~84 m, 11 checkpoints, all 10 relics. |
+| **The Storm Spire** | ★★ | Short and mean. Permanent gusts, fall-away tiles, an off-centre sweeper, moving platforms. |
+| **The Void Causeway** | ★★★ | Almost nothing to stand on. Timed doors, a vertical lift, hammers, and a lever bridge someone has to hold while everyone else crosses. |
+
+**Party size.** The host picks 2, 3 or 4 climbers in the lobby before starting. The rope runs in a line — 1—2—3—4 — so every extra climber is one more link to drag, one more person who can pull you off a ledge, and one more who can anchor and hold the whole party. Three and four players are meaningfully harder than two, which is the point.
 
 No build step and no server code are needed. The game is a folder of static files (HTML, CSS and ES modules).
 

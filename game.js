@@ -14,17 +14,28 @@ const clonePl = pl => ({ ...pl, p: { ...pl.p }, v: { ...pl.v } });
 export class Game {
   // cfg: { kind: 'local'|'host'|'guest', canvas, input, hud, audio, settings:{mode,chainLen,startZone,quality,fov}, names, colors, skins, chainStyle, save?, link?, onEnd }
   constructor(cfg) {
-    this.cfg = cfg; this.kind = cfg.kind; this.input = cfg.input; this.hud = cfg.hud; this.audio = cfg.audio; this.me = this.kind === 'guest' ? 1 : 0;
-    const st = cfg.settings; this.sim = new Sim({ mode: st.mode, chainLen: st.chainLen, startZone: st.startZone || 0, names: cfg.names, ids: cfg.ids });
+    this.cfg = cfg; this.kind = cfg.kind; this.input = cfg.input; this.hud = cfg.hud; this.audio = cfg.audio;
+    this.me = this.kind === 'guest' ? (cfg.slot ?? 1) : 0;
+    const st = cfg.settings;
+    const n = Math.max(2, Math.min(4, cfg.players || st.players || cfg.names?.length || 2));
+    this.sim = new Sim({ n, level: st.level || 'ascent', mode: st.mode, chainLen: st.chainLen, startZone: st.startZone || 0, names: cfg.names, ids: cfg.ids });
     if (cfg.save) this.sim.fromSave(cfg.save);
-    this.R = new Renderer(cfg.canvas, this.sim.L, { quality: st.quality, fov: st.fov, p1: { color: cfg.colors[0], skin: cfg.skins[0], name: cfg.names[0] }, p2: { color: cfg.colors[1], skin: cfg.skins[1], name: cfg.names[1] }, chainStyle: cfg.chainStyle });
-    this.R.setQuality(st.quality); this.rig = new CamRig(); this.rope = new Rope(18); this.acc = 0; this.last = now(); this.running = false; this.fx = { fall: 0, flash: 0, white: 0 };
+    this.R = new Renderer(cfg.canvas, this.sim.L, { quality: st.quality, fov: st.fov,
+      party: this.sim.players.map((_, i) => ({ color: cfg.colors[i], skin: cfg.skins[i], name: cfg.names[i] })),
+      p1: { color: cfg.colors[0], skin: cfg.skins[0], name: cfg.names[0] }, p2: { color: cfg.colors[1], skin: cfg.skins[1], name: cfg.names[1] }, chainStyle: cfg.chainStyle });
+    this.R.setQuality(st.quality); this.rig = new CamRig();
+    // one visual rope per linked pair: 0—1, 1—2, 2—3
+    this.ropes = Array.from({ length: Math.max(1, this.sim.n - 1) }, () => new Rope(18)); this.rope = this.ropes[0]; this.acc = 0; this.last = now(); this.running = false; this.fx = { fall: 0, flash: 0, white: 0 };
     this.prevP = this.sim.players.map(p => ({ ...p.p })); this.groundY = [0, 0]; this.tick = 0; this.events = []; this.sendQ = [];
     this.input.local2 = this.kind === 'local'; this.input.onPause = () => this.togglePause(); this.input.onReset = () => this.askReset();
     // guest state
     this.hist = []; this.seq = 0; this.snaps = []; this.err = { x: 0, y: 0, z: 0 }; this.tOff = null; this.rtt = 0.08; this.lastSnapAt = 0; this.lastAck = -1;
-    // host state
-    this.gq = []; this.gLast = 0; this.gInput = {}; this.gProc = 0;
+    // host state — one input queue per guest slot (1…n-1)
+    const N = this.sim.n;
+    this.slot = cfg.slot ?? (this.kind === 'guest' ? 1 : 0);
+    this.gq = Array.from({ length: N }, () => []); this.gLast = Array(N).fill(0);
+    this.gInput = Array.from({ length: N }, () => ({})); this.gProc = Array(N).fill(0);
+    this.snapsBy = Array.from({ length: N }, () => []);   // guest: buffered remote states per slot
     this.rig.yaw = this.sim.L.cps[this.sim.cp].yaw || 0; this.lastCam = this.rig.yaw;
     this.intro = !cfg.save && (this.sim.cp === 0);
     window.__game = this;
@@ -74,17 +85,20 @@ export class Game {
 
   // ───── host ─────
   hostTakeGuestInput() {
-    while (this.gq.length > 8) this.gq.shift(); // never let latency pile up
-    const next = this.gq.shift(); if (next) { this.gInput = next; this.gProc = next.seq; }
-    this.sim.setInput(1, this.gInput);
+    for (let i = 1; i < this.sim.n; i++) {
+      const q = this.gq[i]; while (q.length > 8) q.shift();   // never let latency pile up
+      const next = q.shift(); if (next) { this.gInput[i] = next; this.gProc[i] = next.seq; }
+      this.sim.setInput(i, this.gInput[i]);
+    }
   }
-  onGuestInput(arr) { for (const a of arr) { if (a[0] <= this.gLast) continue; this.gLast = a[0]; this.gq.push({ seq: a[0], f: a[1], s: a[2], yaw: a[3], sprint: !!(a[4] & 1), jump: !!(a[4] & 2), use: !!(a[4] & 4), jp: a[5], up: a[6] }); } }
-  sendSnapshot() { const s = this.sim.snapshot([0, this.gProc]); s.ev = this.sendQ; this.sendQ = []; this.cfg.link?.send(s); }
+  onGuestInput(arr, slot = 1) { const q = this.gq[slot] || (this.gq[slot] = []); for (const a of arr) { if (a[0] <= this.gLast[slot]) continue; this.gLast[slot] = a[0]; q.push({ seq: a[0], f: a[1], s: a[2], yaw: a[3], sprint: !!(a[4] & 1), jump: !!(a[4] & 2), use: !!(a[4] & 4), jp: a[5], up: a[6] }); } }
+  sendSnapshot() { const s = this.sim.snapshot(this.gProc.slice()); s.ev = this.sendQ; this.sendQ = [];
+    if (this.cfg.sendAll) this.cfg.sendAll(s); else this.cfg.link?.send(s); }
 
   // ───── guest ─────
   serverTime() { if (this.tOff === null) return this.sim.t; return (now() / 1000) + this.tOff; }
   guestStep() {
-    const S = this.sim, me = S.players[1]; this.prevP = S.players.map(p => ({ ...p.p }));
+    const S = this.sim, me = S.players[this.slot]; this.prevP = S.players.map(p => ({ ...p.p }));
     if (!this.started) return;
     const inp = this.rig.cine ? { f: 0, s: 0, sprint: false, jump: false, use: false, yaw: this.camYaw(), jp: this.input.cnt[0].jp, up: this.input.cnt[0].up } : this.input.frame(0, this.camYaw()); inp.seq = ++this.seq; this.hist.push(inp); if (this.hist.length > 240) this.hist.shift();
     this.outIn = this.outIn || []; this.outIn.push([inp.seq, +inp.f.toFixed(2), +inp.s.toFixed(2), +inp.yaw.toFixed(3), (inp.sprint ? 1 : 0) | (inp.jump ? 2 : 0) | (inp.use ? 4 : 0), inp.jp, inp.up]);
@@ -92,28 +106,40 @@ export class Game {
     const t = this.serverTime(); S.poseObstacles(t, DT); this.predict(me, inp);
   }
   predict(me, inp) {
-    const S = this.sim, other = this.remoteNow || S.players[0];
-    stepPlayer(me, inp, { dt: DT, t: S.t, world: S.world, wind: p => S.windAt(p, me), others: [other], hanging: p => S.chain.taut && !p.grounded });
-    // local approximation of the chain: only our side moves (the host resolves the real constraint)
-    const ghost = clonePl(other); ghost.anchored = 'x'; tether(ghost, me, S.Le, {}, inp, DT);
+    const S = this.sim;
+    // keyed by real slot index — filtering first would shift the keys and pair us with the wrong body
+    const others = S.players.map((p, i) => (i === this.slot ? null : (this.remoteNow?.[i] || p))).filter(Boolean);
+    stepPlayer(me, inp, { dt: DT, t: S.t, world: S.world, wind: p => S.windAt(p, me), others, hanging: p => S.chain.taut && !p.grounded });
+    // Local approximation of the rope: pin each roped neighbour and let only our end move. The host
+    // still owns the real constraint; this just keeps our own character from drifting through it.
+    for (const o of S.neighbours(this.slot)) {
+      const ghost = clonePl(this.remoteOf(o.id) || o); ghost.anchored = 'x';
+      if (o.id < this.slot) tether(ghost, me, S.Le, {}, inp, DT); else tether(me, ghost, S.Le, inp, {}, DT);
+    }
   }
+  /** Guest: the interpolated state of another slot, if we have one buffered. */
+  remoteOf(i) { return this.remoteNow?.[i] || null; }
   onSnapshot(s) {
-    const S = this.sim, me = S.players[1], tNow = now() / 1000;
+    const S = this.sim, me = S.players[this.slot], tNow = now() / 1000;
     if (this.lastSnapK !== undefined && s.k <= this.lastSnapK) return; this.lastSnapK = s.k;
     const off = s.time - tNow + this.rtt / 2; this.tOff = this.tOff === null ? off : this.tOff + (off - this.tOff) * 0.1; if (Math.abs(off - this.tOff) > 0.5) this.tOff = off;
     const before = { ...me.p }, wasState = S.state;
-    S.applySnapshot(s, 1); this.snaps.push({ at: now(), pl: s.pl[0] }); while (this.snaps.length > 30) this.snaps.shift();
+    S.applySnapshot(s, this.slot);
+    // buffer every other slot separately so each one can be interpolated on its own timeline
+    const at = now();
+    for (let i = 0; i < s.pl.length; i++) { if (i === this.slot) continue; const b = this.snapsBy[i] || (this.snapsBy[i] = []); b.push({ at, pl: s.pl[i] }); while (b.length > 30) b.shift(); }
+    this.snaps = this.snapsBy[this.slot === 0 ? 1 : 0] || [];
     for (const e of s.ev || []) this.onEvent(e);
     if (!this.started) { this.started = true; }
     // reconcile own character: authoritative state at the acknowledged input, then replay the rest
-    const ack = s.ack[1]; Sim.applyPlayer(me, s.pl[1], S.world); this.hist = this.hist.filter(h => h.seq > ack);
+    const ack = Array.isArray(s.ack) ? s.ack[this.slot] : s.ack; Sim.applyPlayer(me, s.pl[this.slot], S.world); this.hist = this.hist.filter(h => h.seq > ack);
     if (S.state === 'play' && !S.paused) { const t = this.serverTime(); for (const h of this.hist) { this.predict(me, h); } }
     const ex = before.x - me.p.x, ey = before.y - me.p.y, ez = before.z - me.p.z;
     if (Math.hypot(ex, ey, ez) > 3 || wasState !== S.state) this.err = { x: 0, y: 0, z: 0 }; else { this.err.x += ex; this.err.y += ey; this.err.z += ez; }
     this.lastSnapAt = now();
   }
-  remoteInterp() { // render the host 100 ms in the past between buffered snapshots
-    const rt = now() - 100, b = this.snaps; if (!b.length) return null; let i = b.length - 1; while (i > 0 && b[i - 1].at > rt) i--;
+  remoteInterp(slot) { // render other players ~100 ms in the past, between buffered snapshots
+    const rt = now() - 100, b = slot === undefined ? this.snaps : (this.snapsBy[slot] || []); if (!b.length) return null; let i = b.length - 1; while (i > 0 && b[i - 1].at > rt) i--;
     const A = b[Math.max(0, i - 1)], B = b[i]; const k = B.at === A.at ? 1 : Math.max(0, Math.min(1, (rt - A.at) / (B.at - A.at)));
     const pl = newPlayer(0, 0, 0, 0); Sim.applyPlayer(pl, B.pl, this.sim.world); pl.p.x = lerp(A.pl[0], B.pl[0], k); pl.p.y = lerp(A.pl[1], B.pl[1], k); pl.p.z = lerp(A.pl[2], B.pl[2], k); pl.yaw = lerpAng(A.pl[6], B.pl[6], k); pl.moved = (this._rm || 0) + Math.hypot(pl.p.x - (this._rp?.x ?? pl.p.x), pl.p.z - (this._rp?.z ?? pl.p.z)); this._rm = pl.moved; this._rp = { ...pl.p }; pl.speed = Math.hypot(B.pl[3], B.pl[5]);
     return pl;
@@ -141,7 +167,7 @@ export class Game {
       case 'rescue': H.toast(`${S.names[who]} is dangling! Haul them up — hold E`, 'warn'); A.play('warn'); break;
       case 'saved': H.toast(`${S.names[who]} is safe!`); A.play('saved'); this.cfg.onRescue?.(); break;
       case 'fall': A.play('fall'); this.fx.fall = 1; H.fallBanner(e.why === 'both' ? 'You both fell!' : `${S.names[e.who[0]]} fell!`, S.mode === 'hardcore' ? 'Hardcore — back to the bottom' : 'Back to the checkpoint'); this.rig.shake = 1; this.cfg.onFall?.(e); break;
-      case 'respawn': this.fx.white = 1; this.rope.init = false; this.err = { x: 0, y: 0, z: 0 }; break;
+      case 'respawn': this.fx.white = 1; for (const r of this.ropes) r.init = false; this.err = { x: 0, y: 0, z: 0 }; break;
       case 'launch': A.play('launch'); R.burst({ x: at.x, y: at.y + 0.5, z: at.z }, '#ff8a6a', 60, 6, 8, 1.1); break;
       case 'crack': A.play('crack', rel); break;
       case 'creak': A.play('creak', rel); break;
@@ -160,21 +186,26 @@ export class Game {
   draw(dt, alpha) {
     const S = this.sim, R = this.R; let pls;
     if (this.kind === 'guest') {
-      const me = clonePl(S.players[1]); const k = Math.max(0, 1 - dt * 8); this.err.x *= k; this.err.y *= k; this.err.z *= k; me.p.x += this.err.x; me.p.y += this.err.y; me.p.z += this.err.z;
-      const rem = this.remoteInterp() || clonePl(S.players[0]); this.remoteNow = rem; pls = [rem, me];
+      const me = clonePl(S.players[this.slot]); const k = Math.max(0, 1 - dt * 8); this.err.x *= k; this.err.y *= k; this.err.z *= k; me.p.x += this.err.x; me.p.y += this.err.y; me.p.z += this.err.z;
+      const rem = {}; pls = S.players.map((pl, i) => { if (i === this.slot) return me; const r = this.remoteInterp(i) || clonePl(pl); rem[i] = r; return r; });
+      this.remoteNow = rem;
     } else pls = S.players.map((pl, i) => { const c = clonePl(pl); const a = this.prevP[i]; if (a) { c.p.x = lerp(a.x, pl.p.x, alpha); c.p.y = lerp(a.y, pl.p.y, alpha); c.p.z = lerp(a.z, pl.p.z, alpha); } return c; });
     // ground shadow height under each player
     pls.forEach((pl, i) => { const h = S.world.raycast(pl.p.x, pl.p.y + 0.5, pl.p.z, 0, -1, 0, 30); this.groundY[i] = h.box ? pl.p.y + 0.5 - h.t : -999; });
-    // rope between the rendered attach points
-    const wa = { x: pls[0].p.x, y: pls[0].p.y + P.waist, z: pls[0].p.z }, wb = { x: pls[1].p.x, y: pls[1].p.y + P.waist, z: pls[1].p.z };
-    this.rope.step(wa, wb, S.Le, Math.min(dt, 1 / 30), this.R.q === 'low' ? null : S.world);
-    this.audio.chain(this.rope.motion, S.chain.tension, S.chain.state);
+    // ropes between the rendered attach points, one per linked pair
+    const waist = pl => ({ x: pl.p.x, y: pl.p.y + P.waist, z: pl.p.z });
+    let motion = 0;
+    for (let i = 0; i < this.ropes.length && i + 1 < pls.length; i++) {
+      this.ropes[i].step(waist(pls[i]), waist(pls[i + 1]), S.Le, Math.min(dt, 1 / 30), this.R.q === 'low' ? null : S.world);
+      motion = Math.max(motion, this.ropes[i].motion);
+    }
+    this.audio.chain(motion, S.chain.tension, S.chain.state);
     // camera
     const focus = this.kind === 'local' ? { x: (pls[0].p.x + pls[1].p.x) / 2, y: (pls[0].p.y + pls[1].p.y) / 2, z: (pls[0].p.z + pls[1].p.z) / 2 } : pls[this.me].p;
     const sep = Math.hypot(pls[0].p.x - pls[1].p.x, pls[0].p.y - pls[1].p.y, pls[0].p.z - pls[1].p.z);
     this.rig.update(R.cam, focus, dt, S.world, { dist: this.kind === 'local' ? 7.5 + sep * 0.55 : 7.2, orbit: S.state === 'victory' ? S.L.bell.pos : null });
     this.fx.fall = Math.max(0, this.fx.fall - dt * 0.7); this.fx.white = Math.max(0, this.fx.white - dt * 1.4);
-    R.frame({ players: pls, rope: this.rope, chain: S.chain, t: this.kind === 'guest' ? this.serverTime() : S.t, cp: S.cp, cpReached: S.cpReached, relics: S.relics, zone: S.zone, state: S.state, groundY: this.groundY, focus, fx: this.fx }, dt);
+    R.frame({ players: pls, rope: this.rope, ropes: this.ropes, chain: S.chain, t: this.kind === 'guest' ? this.serverTime() : S.t, cp: S.cp, cpReached: S.cpReached, relics: S.relics, zone: S.zone, state: S.state, groundY: this.groundY, focus, fx: this.fx }, dt);
     R.render();
     this.hud.update(this, pls, dt);
   }

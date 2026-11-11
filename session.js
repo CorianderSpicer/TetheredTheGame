@@ -10,15 +10,27 @@ const pid = (() => { try { let p = localStorage.getItem('tethered.pid'); if (!p)
 export const PID = pid;
 
 export class Session {
-  constructor(role, me, ev = {}) { this.role = role; this.me = me; this.ev = ev; this.net = new Net(); this.link = null; this.room = ''; this.lobby = null; this.inGame = false; this.closed = false; this.lastRx = 0; this.rtt = 0; this.hb = null; this.reconnecting = false; this.guestPid = null; this.manualId = null; }
+  constructor(role, me, ev = {}) { this.role = role; this.me = me; this.ev = ev; this.net = new Net(); this.link = null; this.room = ''; this.lobby = null; this.inGame = false; this.closed = false; this.lastRx = 0; this.rtt = 0; this.hb = null; this.reconnecting = false; this.guestPid = null; this.manualId = null;
+    // Host side: one link per guest, indexed by the slot they occupy (slot 0 is always the host).
+    // `this.link` stays as the guest's single link to the host, and as slot 1 for a 2-player game,
+    // so everything that only ever expects a partner keeps working.
+    this.slots = [null, null, null, null]; this.maxPlayers = 2; this.slot = 0; }
+  /** Host: links of every connected guest. */
+  guestLinks() { return this.slots.filter(Boolean); }
+  /** Host: broadcast to every guest. */
+  sendAll(o) { for (const l of this.guestLinks()) l.send(o); }
+  /** Host: which slot a link sits in, or -1. */
+  slotOf(l) { return this.slots.indexOf(l); }
   setSignal(s) { this.net.signal = s || null; }
   setTurn(t) { if (t && t.urls) this.net.turn = { urls: t.urls.split(/[ ,]+/).filter(Boolean), username: t.username || undefined, credential: t.credential || undefined }; }
   status(text, kind = 'info') { this.ev.onStatus?.(text, kind); }
   // ───── host ─────
   async host(settings, resume) {
-    this.lobby = { room: '', players: [{ ...this.me, ready: true, here: true }, null], settings, resume: resume || null };
-    this.net.onlink = l => this.hostAdopt(l); this.net.ondrop = id => { if (this.link && this.link.id === id) this.hostDrop(); };
-    this.net.onmsg = (id, m) => { if (this.link && id === this.link.id) this.hostMsg(m); else this.pendingMsg(id, m); };
+    this.maxPlayers = Math.max(2, Math.min(4, settings?.players || 2));
+    this.lobby = { room: '', players: Array.from({ length: this.maxPlayers }, (_, i) => i === 0 ? { ...this.me, ready: true, here: true } : null), settings, resume: resume || null };
+    this.net.onlink = l => this.hostAdopt(l);
+    this.net.ondrop = id => { const i = this.slots.findIndex(l => l && l.id === id); if (i > 0) this.hostDrop(false, i); };
+    this.net.onmsg = (id, m) => { const i = this.slots.findIndex(l => l && l.id === id); if (i > 0) this.hostMsg(m, i); else this.pendingMsg(id, m); };
     this.startHeartbeat();
     const want = resume?.roomCode && CODE_RE.test(resume.roomCode) ? resume.roomCode : Net.code();
     try { this.room = await this.net.hostRoom(want); }
@@ -33,33 +45,47 @@ export class Session {
   hostHello(l, m) {
     l._fresh = false;
     if (m.proto !== PROTO || String(m.version).split('.')[0] !== VERSION.split('.')[0]) { l.send({ t: 'reject', reason: 'version', version: VERSION }); setTimeout(() => l.close(), 300); this.status(`A player with an incompatible version (${m.version}) tried to join.`, 'error'); return; }
-    if (this.link && this.link.open && this.link !== l) { l.send({ t: 'reject', reason: 'full' }); setTimeout(() => l.close(), 300); return; }
-    const rejoin = this.guestPid && this.guestPid === m.pid; this.link = l; this.guestPid = m.pid; this.lastRx = performance.now();
-    this.lobby.players[1] = { name: (m.name || 'Player 2').slice(0, 16), color: m.color, skin: m.skin, ready: false, here: true, pid: m.pid };
-    l.send({ t: 'welcome', room: this.room, version: VERSION, rejoin }); this.status(rejoin ? `${this.lobby.players[1].name} reconnected.` : `${this.lobby.players[1].name} joined.`, 'ok');
-    if (this.inGame) this.ev.onRejoin?.(this.lobby.players[1], rejoin); else this.pushLobby();
-  }
-  hostMsg(m) {
+    if (this.slotOf(l) > 0) return;                      // already seated
+    // Someone reconnecting takes their old seat back; otherwise the first free one.
+    let i = this.lobby.players.findIndex((p, k) => k > 0 && p && p.pid === m.pid && !p.here);
+    if (i < 0) i = this.lobby.players.findIndex((p, k) => k > 0 && !p);
+    if (i < 0) { l.send({ t: 'reject', reason: 'full' }); setTimeout(() => l.close(), 300); return; }
+    const rejoin = !!(this.lobby.players[i] && this.lobby.players[i].pid === m.pid);
+    this.slots[i] = l; if (i === 1) { this.link = l; this.guestPid = m.pid; }
     this.lastRx = performance.now();
+    this.lobby.players[i] = { name: (m.name || ('Player ' + (i + 1))).slice(0, 16), color: m.color, skin: m.skin, ready: false, here: true, pid: m.pid };
+    l.send({ t: 'welcome', room: this.room, version: VERSION, rejoin, slot: i, players: this.maxPlayers });
+    this.status(rejoin ? `${this.lobby.players[i].name} reconnected.` : `${this.lobby.players[i].name} joined.`, 'ok');
+    if (this.inGame) this.ev.onRejoin?.(this.lobby.players[i], rejoin, i); else this.pushLobby();
+  }
+  hostMsg(m, i = 1) {
+    this.lastRx = performance.now();
+    const l = this.slots[i];
     switch (m.t) {
-      case 'hello': return this.hostHello(this.link, m);
-      case 'profile': if (this.lobby.players[1]) { Object.assign(this.lobby.players[1], { name: (m.name || '').slice(0, 16) || 'Player 2', color: m.color, skin: m.skin }); this.pushLobby(); } break;
-      case 'ready': if (this.lobby.players[1]) { this.lobby.players[1].ready = !!m.v; this.pushLobby(); } break;
-      case 'ping': this.link.send({ t: 'pong', c: m.c }); break;
+      case 'hello': return this.hostHello(l, m);
+      case 'profile': if (this.lobby.players[i]) { Object.assign(this.lobby.players[i], { name: (m.name || '').slice(0, 16) || ('Player ' + (i + 1)), color: m.color, skin: m.skin }); this.pushLobby(); } break;
+      case 'ready': if (this.lobby.players[i]) { this.lobby.players[i].ready = !!m.v; this.pushLobby(); } break;
+      case 'ping': l?.send({ t: 'pong', c: m.c }); break;
       case 'pong': this.rtt = (performance.now() - m.c) / 1000; break;
-      case 'leave': this.status(`${this.lobby.players[1]?.name || 'Partner'} left the game.`, 'warn'); this.hostDrop(true); break;
-      default: this.ev.onGameMsg?.(m);
+      case 'leave': this.status(`${this.lobby.players[i]?.name || 'A climber'} left the game.`, 'warn'); this.hostDrop(true, i); break;
+      default: this.ev.onGameMsg?.(m, i);
     }
   }
-  hostDrop(left) { const was = this.link; this.link = null; if (was) try { was.close(); } catch (e) { }
-    if (this.lobby.players[1]) { this.lobby.players[1].here = false; this.lobby.players[1].ready = false; }
-    if (!this.inGame) { this.lobby.players[1] = null; this.guestPid = null; this.pushLobby(); }
-    this.ev.onDrop?.(left); }
-  pushLobby() { this.ev.onLobby?.(this.lobby); this.link?.send({ t: 'lobby', ...this.lobby, players: this.lobby.players.map(p => p && { name: p.name, color: p.color, skin: p.skin, ready: p.ready, here: p.here }) }); }
-  canStart() { return !!(this.link && this.lobby.players[1]?.ready); }
+  hostDrop(left, i = 1) { const was = this.slots[i]; this.slots[i] = null; if (i === 1) this.link = null; if (was) try { was.close(); } catch (e) { }
+    if (this.lobby.players[i]) { this.lobby.players[i].here = false; this.lobby.players[i].ready = false; }
+    if (!this.inGame) { this.lobby.players[i] = null; if (i === 1) this.guestPid = null; this.pushLobby(); }
+    this.ev.onDrop?.(left, i); }
+  pushLobby() { this.ev.onLobby?.(this.lobby); this.sendAll({ t: 'lobby', ...this.lobby, players: this.lobby.players.map(p => p && { name: p.name, color: p.color, skin: p.skin, ready: p.ready, here: p.here }) }); }
+  /** Everyone expected has arrived and said they are ready. */
+  canStart() { const ps = this.lobby?.players || []; return ps.length > 1 && ps.every((p, i) => i === 0 ? true : !!(p && p.here && p.ready)) && this.guestLinks().length === ps.length - 1; }
+  /** Host: resize the party (2–4). Guests beyond the new size are dropped. */
+  setPlayers(n) { n = Math.max(2, Math.min(4, n)); this.maxPlayers = n;
+    for (let i = n; i < this.slots.length; i++) if (this.slots[i]) { try { this.slots[i].send({ t: 'reject', reason: 'full' }); this.slots[i].close(); } catch (e) { } this.slots[i] = null; }
+    const ps = this.lobby.players; while (ps.length < n) ps.push(null); ps.length = n;
+    this.lobby.settings.players = n; this.pushLobby(); }
   setSettings(s) { Object.assign(this.lobby.settings, s); this.pushLobby(); }
   setMe(me) { Object.assign(this.lobby.players[0], me); this.pushLobby(); }
-  sendStart(msg) { this.inGame = true; this.link?.send({ t: 'start', ...msg }); }
+  sendStart(msg) { this.inGame = true; this.sendAll({ t: 'start', ...msg }); }
   // ───── guest ─────
   async join(code) {
     code = (code || '').trim().toUpperCase(); if (!CODE_RE.test(code)) throw new Error('Invalid room code — codes are 5 letters/numbers (no I, O, 0, 1, B or 8).');
@@ -71,8 +97,8 @@ export class Session {
   guestMsg(m) {
     this.lastRx = performance.now();
     switch (m.t) {
-      case 'welcome': this.welcomed = true; clearTimeout(this.helloTimer); if (m.version !== VERSION) this.status(`Host runs ${m.version}, you run ${VERSION} (compatible).`, 'warn'); this.status(m.rejoin ? 'Reconnected!' : 'Connected to the host.', 'ok'); this.ev.onWelcome?.(m); break;
-      case 'reject': this.closed = true; this.ev.onError?.(m.reason === 'version' ? `Incompatible game versions: the host runs TETHERED ${m.version}, you run ${VERSION}. Both players need the same version.` : m.reason === 'full' ? 'That room already has two players.' : 'The host refused the connection.'); this.close(); break;
+      case 'welcome': this.welcomed = true; this.slot = m.slot ?? 1; this.maxPlayers = m.players || 2; clearTimeout(this.helloTimer); if (m.version !== VERSION) this.status(`Host runs ${m.version}, you run ${VERSION} (compatible).`, 'warn'); this.status(m.rejoin ? 'Reconnected!' : 'Connected to the host.', 'ok'); this.ev.onWelcome?.(m); break;
+      case 'reject': this.closed = true; this.ev.onError?.(m.reason === 'version' ? `Incompatible game versions: the host runs TETHERED ${m.version}, you run ${VERSION}. Both players need the same version.` : m.reason === 'full' ? 'That room is full.' : 'The host refused the connection.'); this.close(); break;
       case 'lobby': this.lobby = m; this.ev.onLobby?.(m); break;
       case 'start': this.inGame = true; this.ev.onStart?.(m); break;
       case 'ping': this.link?.send({ t: 'pong', c: m.c }); break;
@@ -88,8 +114,11 @@ export class Session {
       try { try { this.net.peer?.destroy(); } catch (e) { } const l = await this.withTimeout(this.net.joinRoom(this.room), 9000, 'timeout'); this.guestLinked(l); return; } catch (e) { await new Promise(r => setTimeout(r, 2500)); } }
     this.reconnecting = false; if (!this.closed) this.ev.onError?.('Connection lost. The host may have left — ask them for a new code.'); }
   send(o) { this.link?.send(o); }
-  startHeartbeat() { clearInterval(this.hb); this.hb = setInterval(() => { if (!this.link) return; this.link.send({ t: 'ping', c: performance.now() }); if (performance.now() - this.lastRx > 6000) { this.status('No data from the other player for 6 s — connection lost.', 'warn'); const l = this.link; this.link = null; try { l.close(); } catch (e) { } if (this.role === 'host') this.hostDrop(); else this.guestDrop(); } }, 1000); }
+  startHeartbeat() { clearInterval(this.hb); this.hb = setInterval(() => {
+    if (this.role === 'host') { for (let i = 1; i < this.slots.length; i++) this.slots[i]?.send({ t: 'ping', c: performance.now() }); return; }
+    if (!this.link) return; this.link.send({ t: 'ping', c: performance.now() });
+    if (performance.now() - this.lastRx > 6000) { this.status('No data from the other player for 6 s — connection lost.', 'warn'); const l = this.link; this.link = null; try { l.close(); } catch (e) { } this.guestDrop(); } }, 1000); }
   withTimeout(p, ms, msg) { return new Promise((res, rej) => { const t = setTimeout(() => rej(new Error(msg)), ms); p.then(v => { clearTimeout(t); res(v); }, e => { clearTimeout(t); rej(e); }); }); }
   quality() { if (!this.link) return { q: 'bad', text: this.role === 'host' ? 'Partner offline' : 'Reconnecting…' }; const ms = Math.round(this.rtt * 1000); return { q: ms < 90 ? 'good' : ms < 200 ? 'ok' : 'bad', text: `${ms} ms` }; }
-  close() { this.closed = true; clearInterval(this.hb); try { if (this.role === 'guest') this.link?.send({ t: 'leave' }); else this.link?.send({ t: 'end', reason: 'host-left' }); } catch (e) { } setTimeout(() => this.net.close(), 100); }
+  close() { this.closed = true; clearInterval(this.hb); try { if (this.role === 'guest') this.link?.send({ t: 'leave' }); else this.sendAll({ t: 'end', reason: 'host-left' }); } catch (e) { } setTimeout(() => this.net.close(), 100); }
 }
