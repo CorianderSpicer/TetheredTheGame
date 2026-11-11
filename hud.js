@@ -14,19 +14,7 @@ export class Hud {
   fallBanner(title, sub) { const f = this.el.hFall; f.innerHTML = `<div class="ft">${title}</div><div class="fs">${sub}</div>`; f.classList.remove('show'); void f.offsetWidth; f.classList.add('show'); }
   pauseMenu(on, game) { $('#pause').classList.toggle('hidden', !on); this.onPause?.(on, game); }
   confirm(text, ok, fn, cancel = 'Cancel') { const d = $('#confirm'); $('#confirmText').textContent = text; $('#confirmOk').textContent = ok; $('#confirmNo').textContent = cancel; d.classList.remove('hidden'); const close = () => d.classList.add('hidden'); $('#confirmOk').onclick = () => { close(); fn(); }; $('#confirmNo').onclick = close; }
-  setNames(names, colors) {
-    // The strip is authored for two; for a bigger party we build the extra slots and chain glyphs
-    // on the fly so three and four climbers all show up.
-    const row = this.el.hName0?.parentElement;
-    if (row) {
-      row.innerHTML = names.map((n, i) => `${i ? '<span class="link">⛓</span>' : ''}<span id="hName${i}"></span>`).join('');
-      names.forEach((n, i) => { this.el['hName' + i] = row.querySelector('#hName' + i); });
-    }
-    names.forEach((n, i) => { const el = this.el['hName' + i]; if (el) el.innerHTML = `<i style="background:${colors[i]}"></i>${n}`; });
-    this.el.hLabels.innerHTML = '';
-    this.labels = names.map((n, i) => { const d = document.createElement('div'); d.className = 'plabel'; this.el.hLabels.appendChild(d);
-      d.innerHTML = `<b style="color:${colors[i]}">P${i + 1}</b> ${n}`; return { d }; });
-  }
+  setNames(names, colors) { [0, 1].forEach(i => { this.el['hName' + i].innerHTML = `<i style="background:${colors[i]}"></i>${names[i]}`; }); this.labels = [0, 1].map(i => { let d = this.labels[i]?.d; if (!d) { d = document.createElement('div'); d.className = 'plabel'; this.el.hLabels.appendChild(d); } d.innerHTML = `<b style="color:${colors[i]}">P${i + 1}</b> ${names[i]}`; return { d }; }); }
   update(g, pls, dt) {
     const S = g.sim, E = this.el, me = g.me;
     // tension

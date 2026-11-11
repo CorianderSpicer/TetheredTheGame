@@ -9,7 +9,7 @@ import { Session, CODE_RE } from './session.js';
 import { qrSVG, scanQR } from './net.js';
 import { Saves, FSA, Lock, download, readFile, newSaveId, fileName } from './save.js';
 import { VERSION, MODES } from './sim.js';
-import { ZONES, buildLevel, LEVELS } from './level.js';
+import { ZONES, buildLevel } from './level.js';
 import { SKINS, COLORS } from './char.js';
 import { Renderer, CamRig, CHAIN_STYLES } from './render.js';
 import { Rope } from './chain.js';
@@ -21,7 +21,7 @@ const prof = Profile.load(), S = prof.settings;
 const canvas = $('#view'), input = new Input(canvas, { sens: S.sens }), audio = new Audio(S), hud = new Hud($('#hud'), S);
 input.invert = S.invert; if (input.mobile) document.body.classList.add('touchmode');
 input.bindTouch($('#touch'));
-const app = { screen: 'title', game: null, session: null, meta: null, lastSave: 0, saveMsg: '', lobbySettings: { mode: 'normal', chainLen: 8, startZone: 0, players: 2, level: 'ascent' }, resume: null, returnTo: 'title' };
+const app = { screen: 'title', game: null, session: null, meta: null, lastSave: 0, saveMsg: '', lobbySettings: { mode: 'normal', chainLen: 8, startZone: 0 }, resume: null, returnTo: 'title' };
 window.__app = app;
 addEventListener('pointerdown', () => audio.unlock(), { once: false });
 addEventListener('keydown', e => { audio.unlock(); if (e.code === 'KeyM' && !e.target.closest?.('input,textarea')) { S.muted = !S.muted; audio.apply(); Profile.save(); menuToast(S.muted ? 'Sound muted (M)' : 'Sound on'); } });
@@ -65,14 +65,12 @@ function playerCard(el, who, p, onChange, title) {
   el.querySelectorAll('[data-skin]').forEach(b => b.onclick = () => { if (!Profile.skinUnlocked(b.dataset.skin)) return menuToast('Find more relics to unlock this skin'); p.skin = b.dataset.skin; el.querySelectorAll('[data-skin]').forEach(x => x.classList.toggle('on', x === b)); onChange(p); });
 }
 function settingsCard(el, st, editable, onChange) {
-  const zones = (buildLevel(st.level || 'ascent').zones).map((z, i) => `<option value="${i}" ${st.startZone === i ? 'selected' : ''} ${prof.unlockedZones.includes(i) ? '' : 'disabled'}>${z.sub}: ${z.name}${prof.unlockedZones.includes(i) ? '' : ' (locked)'}</option>`).join('');
+  const zones = ZONES.map((z, i) => `<option value="${i}" ${st.startZone === i ? 'selected' : ''} ${prof.unlockedZones.includes(i) ? '' : 'disabled'}>${z.sub}: ${z.name}${prof.unlockedZones.includes(i) ? '' : ' (locked)'}</option>`).join('');
   const desc = { normal: 'Checkpoints between and within zones. One fall → a rescue window; both fall → back to the checkpoint.', hardcore: 'No checkpoints. Any failed fall restarts the whole climb and the timer.', speedrun: 'Normal rules; the timer never stops, even when paused. Records + leaderboard-ready run file.', practice: 'Start in any zone you have reached before. Records are not kept.' };
-  el.innerHTML = `<div class="lbl">Game settings ${editable ? '' : '(set by the host)'}</div><div class="lbl">Level</div><div class="chips" id="lvChips">${LEVELS.map(l => `<button data-lv="${l.id}" class="${(st.level || 'ascent') === l.id ? 'on' : ''}" ${editable ? '' : 'disabled'} title="${l.sub}">${l.name}<small>${'\u2605'.repeat(l.difficulty)}</small></button>`).join('')}</div>${st.players !== undefined ? `<div class="lbl">Climbers</div><div class="chips" id="sizeChips">${[2, 3, 4].map(n => `<button data-n="${n}" class="${st.players === n ? 'on' : ''}" ${editable ? '' : 'disabled'}>${n} players</button>`).join('')}</div>` : ''}<div class="chips" id="modeChips">${Object.entries(MODES).map(([k, n]) => `<button data-m="${k}" class="${st.mode === k ? 'on' : ''}" ${editable ? '' : 'disabled'}>${n}</button>`).join('')}</div><p class="small">${desc[st.mode]}</p>
+  el.innerHTML = `<div class="lbl">Game settings ${editable ? '' : '(set by the host)'}</div><div class="chips" id="modeChips">${Object.entries(MODES).map(([k, n]) => `<button data-m="${k}" class="${st.mode === k ? 'on' : ''}" ${editable ? '' : 'disabled'}>${n}</button>`).join('')}</div><p class="small">${desc[st.mode]}</p>
     <label>Chain length: <b id="clv">${st.chainLen} m</b></label><input type="range" min="6" max="12" step="1" value="${st.chainLen}" id="chainLen" ${editable ? '' : 'disabled'}>
     <div ${st.mode === 'practice' ? '' : 'class="hidden"'}><label>Practice zone</label><select id="zoneSel" ${editable ? '' : 'disabled'}>${zones}</select></div>`;
   if (!editable) return;
-  el.querySelectorAll('[data-lv]').forEach(b => b.onclick = () => { st.level = b.dataset.lv; if (st.level !== 'ascent') st.startZone = 0; onChange(st); settingsCard(el, st, editable, onChange); });
-  el.querySelectorAll('[data-n]').forEach(b => b.onclick = () => { st.players = +b.dataset.n; onChange(st); settingsCard(el, st, editable, onChange); });
   el.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { st.mode = b.dataset.m; if (st.mode !== 'practice') st.startZone = 0; onChange(st); settingsCard(el, st, editable, onChange); });
   el.querySelector('#chainLen').oninput = e => { st.chainLen = +e.target.value; el.querySelector('#clv').textContent = st.chainLen + ' m'; onChange(st); };
   el.querySelector('#zoneSel').onchange = e => { st.startZone = +e.target.value; onChange(st); };
@@ -81,7 +79,7 @@ const me = () => ({ name: prof.name || 'Player', color: prof.color, skin: prof.s
 const signalServer = () => new URLSearchParams(location.search).get('signal') || S.signal || '';
 
 // ═════ same-screen ═════
-const local = { p: [{ name: prof.name || 'Player 1', color: prof.color, skin: prof.skin }, { name: 'Player 2', color: '#3fb6ff', skin: 'moss' }], st: { level: 'ascent', mode: 'normal', chainLen: 8, startZone: 0 } };
+const local = { p: [{ name: prof.name || 'Player 1', color: prof.color, skin: prof.skin }, { name: 'Player 2', color: '#3fb6ff', skin: 'moss' }], st: { mode: 'normal', chainLen: 8, startZone: 0 } };
 function renderLocal() {
   playerCard($('#lp0'), 0, local.p[0], p => { prof.name = p.name; prof.color = p.color; prof.skin = p.skin; Profile.save(); }, 'Player 1 · keyboard + mouse');
   playerCard($('#lp1'), 1, local.p[1], () => { }, 'Player 2 · arrows or gamepad');
@@ -106,7 +104,7 @@ async function openHost(resume) {
   renderHostSettings(); const code = await s.host(st, resume ? { roomCode: resume.roomCode } : null);
   if (s !== app.session) return; $('#roomCode').textContent = code || '—'; if (code) { $('#hostStatus').textContent = `Room ${code} is open. Waiting for player 2…`; $('#hostStatus').className = 'status ok'; }
 }
-function renderHostSettings() { settingsCard($('#hostSettings'), app.lobbySettings, true, st => { const s = app.session; if (!s) return; if (st.players && st.players !== s.maxPlayers) s.setPlayers(st.players); s.setSettings(st); }); playerCard($('#hostMe'), 0, prof, p => { Profile.save(); app.session?.setMe(me()); }, 'You'); }
+function renderHostSettings() { settingsCard($('#hostSettings'), app.lobbySettings, true, st => app.session?.setSettings(st)); playerCard($('#hostMe'), 0, prof, p => { Profile.save(); app.session?.setMe(me()); }, 'You'); }
 function slotsHTML(L) { return L.players.map((p, i) => p ? `<div class="slot"><span class="sw" style="background:${p.color}"></span><span class="nm">P${i + 1} · ${esc(p.name)}</span><span class="st ${p.ready ? 'ready' : 'wait'}">${!p.here ? 'offline' : p.ready ? 'Ready' : 'Not ready'}</span></div>` : `<div class="slot empty"><span class="sw"></span><span class="nm">P${i + 1} · waiting…</span><span class="st">empty</span></div>`).join(''); }
 function renderHostLobby(L) { $('#hostSlots').innerHTML = slotsHTML(L); const b = $('#hostStart'), ok = app.session?.canStart(); b.disabled = !ok; b.textContent = ok ? (app.resume ? 'Resume climb' : 'Start climb') : L.players[1] ? 'Waiting for player 2 to be ready…' : 'Waiting for player 2…'; }
 $('#copyCode').onclick = () => { navigator.clipboard?.writeText($('#roomCode').textContent).then(() => menuToast('Room code copied')); };
@@ -116,16 +114,12 @@ $('#newOffer').onclick = newInvite; $('#copyOffer').onclick = () => navigator.cl
 $('#acceptAnswer').onclick = async () => { try { await app.session.manualAccept($('#answerText').value); $('#hostStatus').textContent = 'Answer accepted — connecting…'; } catch (e) { $('#hostStatus').textContent = e.message; $('#hostStatus').className = 'status error'; } };
 $('#hostStart').onclick = () => {
   const s = app.session; if (!s?.canStart()) return; const L = s.lobby, st = { ...L.settings };
-  // Everyone in the lobby, with duplicate colours nudged apart so the party stays readable.
-  const used = [me().color];
-  const players = L.players.map((p, i) => { if (i === 0) return { ...me() };
-    let c = p.color; if (used.includes(c)) c = COLORS.find(x => !used.includes(x)) || c; used.push(c);
-    return { name: p.name, color: c, skin: p.skin }; });
-  const save = app.resume ? JSON.parse(JSON.stringify(app.resume)) : null; if (save) { save.host.name = players[0].name; save.guest.name = players[1]?.name || save.guest.name; }
+  const players = [{ ...me() }, { name: L.players[1].name, color: L.players[1].color === me().color ? COLORS.find(c => c !== me().color) : L.players[1].color, skin: L.players[1].skin }];
+  const save = app.resume ? JSON.parse(JSON.stringify(app.resume)) : null; if (save) { save.host.name = players[0].name; save.guest.name = players[1].name; }
   s.sendStart({ settings: st, names: players.map(p => p.name), colors: players.map(p => p.color), skins: players.map(p => p.skin), chainStyle: prof.chainStyle, save });
   startGame('host', { settings: st, players, save });
 };
-function hostGameMsg(m, slot = 1) { const g = app.game; if (!g) return; if (m.t === 'in') g.onGuestInput(m.a, slot); else if (m.t === 'pause') { g.togglePause(!!m.on); hud.toast(m.on ? `${g.sim.names[slot] || 'A climber'} paused` : 'Resumed'); } else if (m.t === 'reset') g.doReset('partner'); }
+function hostGameMsg(m) { const g = app.game; if (!g) return; if (m.t === 'in') g.onGuestInput(m.a); else if (m.t === 'pause') { g.togglePause(!!m.on); hud.toast(m.on ? `${g.sim.names[1]} paused` : 'Resumed'); } else if (m.t === 'reset') g.doReset('partner'); }
 function partnerGone(left) { const g = app.game; if (!g || g.kind !== 'host') return; g.sim.paused = true; autosave('disconnect'); const room = app.session.room;
   waiting(left ? `${esc(g.sim.names[1])} left` : 'Partner disconnected', `The game is paused and a recovery snapshot was saved. ${room ? `Room <b>${room}</b> is still open — they can rejoin with the same code.` : 'They connected with a manual code, so return to the menu and resume from Continue Game with a new invite.'}`, [['Download save', () => doDownload()], ['Save & return to menu', () => endGame('title')]]); }
 function partnerBack(p, same) { const g = app.game; if (!g) return; waitingOff(); const save = g.sim.toSave(app.meta); app.session.sendStart({ settings: { mode: g.sim.mode, chainLen: g.sim.chainLen, startZone: 0 }, names: g.sim.names, colors: g.cfg.colors, skins: g.cfg.skins, chainStyle: g.cfg.chainStyle, save, rejoin: true });
@@ -225,9 +219,6 @@ function startGame(kind, o) {
   if (kind !== 'guest') { const sid = o.save?.saveId || newSaveId(); if (!Lock.id || Lock.id !== sid) Lock.take(sid); app.meta = { saveId: sid, roomCode: app.session?.room || '', colors: players.map(p => p.color), skins: players.map(p => p.skin), chainStyle: o.chainStyle || prof.chainStyle }; }
   const g = app.game = new Game({ kind, canvas, input, hud, audio, settings: { ...o.settings, quality: S.quality, fov: S.fov }, names: players.map(p => p.name), colors: players.map(p => p.color), skins: players.map(p => p.skin), chainStyle: o.chainStyle || prof.chainStyle, save: o.save, ids: [kind === 'local' ? 'local-1' : 'host', kind === 'local' ? 'local-2' : 'guest'],
     link: app.session && kind !== 'local' ? { send: m => app.session.send(m) } : null,
-    sendAll: app.session && kind === 'host' ? (m => app.session.sendAll(m)) : null,
-    slot: kind === 'guest' ? (app.session?.slot ?? 1) : 0,
-    players: players.length,
     connInfo: kind === 'local' ? null : () => app.session?.quality(),
     saveInfo: () => kind === 'guest' ? 'Host keeps the saves' : app.saveMsg,
     onCheckpoint: () => setTimeout(() => autosave('checkpoint'), 50), onZone: e => Profile.unlockZone(e.zone),

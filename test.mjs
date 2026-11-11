@@ -19,8 +19,7 @@ const dist = (a, b) => Math.hypot(a.p.x - b.p.x, a.p.y - b.p.y, a.p.z - b.p.z);
 { const s = mk(); const rr = routeReport(s.L); const designed = new Set(['pullup', 'swingland', 'drumtop', 'lift', 'vlift', 'summit', 'leverbridge']);
   const bad = rr.filter(r => (r.gap > 3.2 || r.rise > 1.35) && !designed.has(r.to) && !designed.has(r.from) && !(r.gap === 4 && r.zone === 2));
   ok('route gaps/rises within controller limits', bad.length === 0, bad.map(b => JSON.stringify(b)).join(' '));
-  ok('the main climb has its five zones, checkpoints and relics', s.L.zones.length === 5 && s.L.cps.length >= 10 && s.L.relics.length === 10,
-    `zones=${s.L.zones.length} cps=${s.L.cps.length} relics=${s.L.relics.length}`);
+  ok('5 zones, 10 checkpoints, 10 relics', s.L.zones.length === 5 && s.L.cps.length === 10 && s.L.relics.length === 10);
   const types = new Set(s.L.obs.map(o => o.type)); for (const t of ['mover', 'rotor', 'hammer', 'door', 'vanish', 'sway', 'icicle', 'fall', 'bridge', 'elevator', 'ferry', 'lever', 'plates', 'drums', 'anchor']) ok('obstacle type present: ' + t, types.has(t));
   ok('wind zones present', s.L.winds.length >= 3); ok('ice + conveyor surfaces', s.L.statics.some(b => b.mat === 'ice') && s.L.statics.some(b => b.belt));
 }
@@ -82,13 +81,9 @@ const dist = (a, b) => Math.hypot(a.p.x - b.p.x, a.p.y - b.p.y, a.p.z - b.p.z);
   run(s, 0.1, t => [inp(s, 0, { press: t === 0 }), inp(s, 1)]); ok('E unclips from the anchor', !A.anchored);
   run(s, 2.5, t => [inp(s, 0, { to: land, sprint: true, jump: t > 0.25 && t < 0.27, jumpHeld: true }), inp(s, 1)]);
   ok('anchor player can follow by jumping down', A.grounded && Math.abs(A.p.y - land.y) < 0.3, `A y=${A.p.y.toFixed(2)}`);
-  // Fresh sim: the final leap is its own thing, not a continuation of the zone-4 swing above.
-  { const s2 = mk(); const [A2, B2] = s2.players; const d = s2.L.obs.filter(o => o.type === 'drums').pop();
-    place(A2, { ...d.pads[0], y: d.pads[0].y + 0.3 }); place(B2, { ...d.pads[1], y: d.pads[1].y + 0.3 }); run(s2, 0.6);
-    run(s2, 2.4, t => [inp(s2, 0, { jump: t === 0, jumpHeld: true }), inp(s2, 1, { jump: t === 0, jumpHeld: true })]);
-    ok('final drums launch both onto the summit', A2.grounded && B2.grounded && A2.p.y > s2.L.bell.pos.y - 0.3, `${A2.p.y.toFixed(1)} vs ${s2.L.bell.pos.y.toFixed(1)}`); }
-
-
+  const d = s.L.obs.find(o => o.type === 'drums' && o.zone === 4); place(A, { ...d.pads[0], y: d.pads[0].y + 0.3 }); place(B, { ...d.pads[1], y: d.pads[1].y + 0.3 }); run(s, 0.6);
+  run(s, 2.4, t => [inp(s, 0, { jump: t === 0, jumpHeld: true }), inp(s, 1, { jump: t === 0, jumpHeld: true })]);
+  ok('final drums launch both onto the summit', A.grounded && B.grounded && A.p.y > s.L.bell.pos.y - 0.3, `${A.p.y.toFixed(1)} vs ${s.L.bell.pos.y}`);
 }
 function zLocal(s, z, pl) { const f = s.L.zones[z].frame, dx = pl.p.x - f.o.x, dz = pl.p.z - f.o.z; return dx * f.s + dz * f.c; }
 // 6 · drums need a simultaneous jump
@@ -164,46 +159,4 @@ function zLocal(s, z, pl) { const f = s.L.zones[z].frame, dx = pl.p.x - f.o.x, d
 { const s = mk(); const [A, B] = s.players; const b = s.L.bell.pos; place(A, { x: b.x - 1, y: b.y, z: b.z }); place(B, { x: b.x + 1, y: b.y, z: b.z }); run(s, 0.4); run(s, 0.2, t => [inp(s, 0, { press: t === 0 }), inp(s, 1)]);
   ok('ringing the bell together wins', s.state === 'victory' && !!s.victory);
 }
-// N · three- and four-player parties
-{ for (const n of [3, 4]) {
-    const s = new Sim({ n, names: Array.from({ length: n }, (_, i) => 'P' + (i + 1)) });
-    ok(`${n}-player sim builds a party of ${n}`, s.players.length === n && s.links.length === n - 1);
-    // everyone spawns apart, on the ground, at the first checkpoint
-    let minSep = 99; for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) minSep = Math.min(minSep, Math.hypot(s.players[i].p.x - s.players[j].p.x, s.players[i].p.z - s.players[j].p.z));
-    ok(`${n} players spawn without overlapping`, minSep > 0.5, `closest pair ${minSep.toFixed(2)} m`);
-    // run them forward together and check nothing explodes and the rope holds
-    for (let k = 0; k < 60 * 5; k++) { for (let i = 0; i < n; i++) s.setInput(i, { f: k > 60 ? 1 : 0, s: 0, yaw: 0, sprint: false, jump: false, jp: 0, use: false, up: 0 }); s.step(); }
-    const finite = s.players.every(pl => Number.isFinite(pl.p.x) && Number.isFinite(pl.p.y) && Number.isFinite(pl.p.z));
-    let worst = 0; for (let i = 0; i < n - 1; i++) worst = Math.max(worst, Math.hypot(s.players[i].p.x - s.players[i + 1].p.x, s.players[i].p.y - s.players[i + 1].p.y, s.players[i].p.z - s.players[i + 1].p.z));
-    ok(`${n}-player sim stays stable while walking`, finite, 'positions finite');
-    ok(`${n}-player rope never exceeds its length`, worst <= s.chainLen * 1.25, `worst link ${worst.toFixed(2)} m of ${s.chainLen}`);
-    // a save round-trip keeps the whole party
-    const sv = s.toSave({ saveId: 'test', roomCode: 'ABCDE' });
-    const s2 = new Sim({ n }); s2.fromSave(sv);
-    ok(`${n}-player save keeps every climber`, s2.players.length === n && Math.abs(s2.players[n - 1].p.y - s.players[n - 1].p.y) < 0.01);
-  } }
-
-// L · every selectable level stands on its own
-{ const { LEVELS, buildLevel, routeReport } = await import('./level.js');
-  ok('three separate levels are offered', LEVELS.length === 3, LEVELS.map(l => l.id).join(', '));
-  for (const lv of LEVELS) {
-    const s = new Sim({ level: lv.id });
-    ok(`${lv.id}: builds with its own base camp and bell`, s.L.cps.length >= 2 && !!s.L.bell && s.L.zones.length >= 1,
-      `cps=${s.L.cps.length} zones=${s.L.zones.length}`);
-    ok(`${lv.id}: starts on the ground, not mid-air`, Math.abs(s.players[0].p.y - s.L.cps[0].pos.y) < 2.5);
-    ok(`${lv.id}: the bell sits above the start`, s.L.summitY > s.L.startY, `${s.L.startY.toFixed(1)} → ${s.L.summitY.toFixed(1)}`);
-    // route limits inside each level
-    const rr = routeReport(s.L); const designed = new Set(['pullup', 'swingland', 'drumtop', 'lift', 'vlift', 'summit', 'leverbridge', 'crumble', 'vanish']);
-    const bad = rr.filter(r => (r.gap > 3.2 || r.rise > 1.35) && !designed.has(r.to) && !designed.has(r.from) && !(r.gap === 4 && r.zone === 2));
-    ok(`${lv.id}: route gaps and rises stay within the controller`, bad.length === 0, bad.map(b => JSON.stringify(b)).join(' '));
-    // a 4-player party can load it too
-    const s4 = new Sim({ level: lv.id, n: 4 });
-    ok(`${lv.id}: holds a party of four`, s4.players.length === 4 && s4.links.length === 3);
-    // a save made here must come back on this level, not on whatever loads by default
-    const sv = s.toSave({ saveId: 'lvl-' + lv.id, roomCode: '' });
-    const back = new Sim(); back.fromSave(sv);
-    ok(`${lv.id}: a save reopens on the same level`, back.level === lv.id && back.L.cps[0].label === s.L.cps[0].label,
-      `reopened as ${back.level}`);
-  } }
-
 console.log(out.join('\n')); console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);

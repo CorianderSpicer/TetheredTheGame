@@ -15,7 +15,7 @@ const SPH = [P.r, 0.86, P.height - P.r]; // sphere centre heights above the feet
 export function newPlayer(id, x, y, z, yaw = 0) {
   return {
     id, p: { x, y, z }, v: { x: 0, y: 0, z: 0 }, yaw, grounded: false, gbox: null, gmat: 'stone', groundNy: 1,
-    coyote: 0, buf: 0, lastJp: 0, lastUp: 0, jumping: false, onHead: false, headOf: null,
+    coyote: 0, buf: 0, lastJp: 0, lastUp: 0, jumping: false, onHead: false,
     anim: 'idle', animT: 0, landT: 0, airT: 0, climbT: 0, lastGroundY: y, stun: 0,
     anchored: null, reel: false, wall: null, wallTop: 0, sprinting: false, speed: 0,
     danger: false, fell: 0, jumpedAt: -9, launch: 0, moved: 0, bodyPush: null,
@@ -84,7 +84,7 @@ export function stepPlayer(pl, inp, env) {
 
   // integrate with sub-steps so nothing tunnels through thin platforms
   const sp = Math.hypot(pl.v.x, pl.v.y, pl.v.z), n = Math.min(4, 1 + Math.floor(sp * dt / 0.22)), h = dt / n;
-  const wasGround = pl.grounded, vyBefore = pl.v.y; pl.grounded = false; pl.gbox = null; pl.wall = null; pl.onHead = false; pl.headOf = null;
+  const wasGround = pl.grounded, vyBefore = pl.v.y; pl.grounded = false; pl.gbox = null; pl.wall = null; pl.onHead = false;
   for (let k = 0; k < n; k++) { pl.p.x += pl.v.x * h; pl.p.y += pl.v.y * h; pl.p.z += pl.v.z * h; collide(pl, W, env); }
   if (env.others) for (const o of env.others) bodyContact(pl, o);
   if (pl.grounded) { pl.lastGroundY = pl.p.y; pl.airT = 0; } else pl.airT += dt;
@@ -135,7 +135,7 @@ function collide(pl, W, env) {
 function bodyContact(a, b) {
   const dx = a.p.x - b.p.x, dz = a.p.z - b.p.z, dy = a.p.y - b.p.y, hd = Math.hypot(dx, dz), R = P.r * 2;
   if (hd >= R || Math.abs(dy) >= P.height) return;
-  if (dy > P.height - 0.55 && a.v.y <= b.v.y + 0.5) { a.p.y = b.p.y + P.height; if (a.v.y < b.v.y) a.v.y = Math.max(0, b.v.y); a.grounded = true; a.onHead = true; a.headOf = b.id; a.gbox = null; a.gmat = 'body'; return; }
+  if (dy > P.height - 0.55 && a.v.y <= b.v.y + 0.5) { a.p.y = b.p.y + P.height; if (a.v.y < b.v.y) a.v.y = Math.max(0, b.v.y); a.grounded = true; a.onHead = true; a.gbox = null; a.gmat = 'body'; return; }
   if (dy < -(P.height - 0.55)) return; // b is on our head; b resolves it
   const nx = hd > 1e-4 ? dx / hd : 1, nz = hd > 1e-4 ? dz / hd : 0, pen = (R - hd) * 0.5;
   a.p.x += nx * pen; a.p.z += nz * pen; const vn = a.v.x * nx + a.v.z * nz; if (vn < 0) { a.v.x -= nx * vn * 0.5; a.v.z -= nz * vn * 0.5; }

@@ -17,45 +17,27 @@ export const ZONES = [
   { key: 'works', name: 'The Industrial Complex', sub: 'Zone 3', mat: 'rust', color: '#e07b39' },
   { key: 'frozen', name: 'The Frozen Peak', sub: 'Zone 4', mat: 'snow', color: '#bfe3ff' },
   { key: 'temple', name: 'The Sky Temple', sub: 'Zone 5', mat: 'marble', color: '#ffd978' },
-  { key: 'spire', name: 'The Storm Spire', sub: 'Zone 6', mat: 'slate', color: '#9b8cff' },
-  { key: 'void', name: 'The Void Causeway', sub: 'Zone 7', mat: 'metal', color: '#64f0d0' },
 ];
 
-/** The separate climbs you can pick from the menu. Each one is its own mountain with its own base
- *  camp and its own bell at the top — not a continuation of the one before it. `zones` lists which
- *  entries of ZONES that climb is built from. */
-export const LEVELS = [
-  { id: 'ascent', name: 'The Ascent', sub: 'The original climb — five zones, base camp to the sky temple', difficulty: 1, zones: [0, 1, 2, 3, 4] },
-  { id: 'spire', name: 'The Storm Spire', sub: 'Short and mean — wind, falling tiles and a sweeper', difficulty: 2, zones: [5] },
-  { id: 'void', name: 'The Void Causeway', sub: 'Nothing to stand on — lifts, timed doors, a lever bridge', difficulty: 3, zones: [6] },
-];
-export const LEVEL_IDS = LEVELS.map(l => l.id);
-export const levelOf = id => LEVELS.find(l => l.id === id) || LEVELS[0];
-
-export function buildLevel(levelId = 'ascent') {
-  const LV = levelOf(levelId);
+export function buildLevel() {
   const L = { world: new World(), obs: [], winds: [], cps: [], relics: [], hints: [], zones: [], path: [], bell: null, statics: [] };
   let zi = 0, fr = null, nid = 0;
   const addS = (o) => { const b = new Box(o); b.zone = zi; L.world.addStatic(b); L.statics.push(b); return b; };
   // platform with its TOP at `top`; o.h thickness, o.col → extend down as a pillar; o.path marks the main route
   const P = (x, top, z, w, d, o = {}) => { const h = o.col ? o.col : (o.h || 1.0); const c = fr.pt(x, top - h / 2, z);
-    const b = addS({ x: c.x, y: c.y, z: c.z, w, h, d, ry: fr.yaw + (o.ry || 0), mat: o.mat || L.zones[zi].mat, belt: o.belt ? fr.dir(o.belt[0], o.belt[1]) : null, vis: o.vis || (o.col ? 'pillar' : 'plat') });
+    const b = addS({ x: c.x, y: c.y, z: c.z, w, h, d, ry: fr.yaw + (o.ry || 0), mat: o.mat || ZONES[zi].mat, belt: o.belt ? fr.dir(o.belt[0], o.belt[1]) : null, vis: o.vis || (o.col ? 'pillar' : 'plat') });
     if (o.path !== false && !o.deco) L.path.push({ zone: zi, x, top, z, w, d, b, kind: o.kind || 'plat' }); return b; };
   const deco = (x, top, z, w, d, h, mat, vis) => P(x, top, z, w, d, { h, mat, vis: vis || 'wall', path: false, deco: true });
   const ob = (o) => { o.zone = zi; L.obs.push(o); for (const b of o.boxes) { b.zone = zi; L.world.addDynamic(b); } return o; };
-  const id = (t) => `${L.zones[zi].key}-${t}-${++nid}`;
+  const id = (t) => `${ZONES[zi].key}-${t}-${++nid}`;
   const cp = (x, y, z, label) => { const n = L.cps.length + 1; const p = fr.pt(x, y, z), a = fr.pt(x - 1.3, y, z), b = fr.pt(x + 1.3, y, z);
     L.cps.push({ id: 'checkpoint-' + String(n).padStart(2, '0'), idx: n - 1, zone: zi, label, pos: p, spawn: [a, b], yaw: fr.yaw + Math.PI, r: 4.2 }); };
   const relic = (x, y, z, secret = true) => L.relics.push({ id: 'relic-' + (L.relics.length + 1), zone: zi, pos: fr.pt(x, y + 0.9, z), secret });
   const hint = (x0, x1, y0, y1, z0, z1, text, icon) => { const a = fr.pt(x0, y0, z0), b = fr.pt(x1, y1, z1); L.hints.push({ zone: zi, text, icon, x0: Math.min(a.x, b.x), x1: Math.max(a.x, b.x), y0: a.y, y1: b.y, z0: Math.min(a.z, b.z), z1: Math.max(a.z, b.z) }); };
   const anchor = (x, y, z) => { const p = fr.pt(x, y, z); const a = { id: 'anchor-' + L.obs.filter(o => o.type === 'anchor').length, type: 'anchor', pos: p, boxes: [], update() { }, reset() { }, pack() { return null; }, stateful: false, zone: zi };
     addS({ ...fr.pt(x, y + 0.55, z), w: 0.36, h: 1.1, d: 0.36, ry: fr.yaw, mat: 'metal', vis: 'anchor' }); L.obs.push(a); return a; };
-  // `k` picks the look (theme/material/colour) from ZONES; the index used everywhere else is the
-  // position within THIS climb, so a standalone level is zone 0 of its own mountain.
-  const zone = (k, x, y, z, yaw) => { zi = L.zones.length; fr = new Frame(x, y, z, yaw); L.zones.push({ ...ZONES[k], idx: zi, gkey: k, frame: fr, y0: y, killY: y - 24 }); };
+  const zone = (k, x, y, z, yaw) => { zi = k; fr = new Frame(x, y, z, yaw); L.zones.push({ ...ZONES[k], idx: k, frame: fr, y0: y, killY: y - 24 }); };
 
-  // Only the zones belonging to the chosen climb are authored.
-  if (LV.id === 'ascent') {
   // ═════ ZONE 1 · THE RUINS ═════
   zone(0, -40, 0, -80, 0);
   P(0, 0, 4, 16, 14, { h: 3, kind: 'start' }); cp(0, 0, 2, 'Base Camp');
@@ -197,88 +179,9 @@ export function buildLevel(levelId = 'ascent') {
   ob(new O.Drums(id('drums'), fr, { pads: [[-1, 7.8, 119.5], [3, 7.8, 119.5]], v: 21, fwd: [0, 0, 4.2] }));
   hint(-4, 6, 7, 13, 113, 123, 'One last leap — JUMP TOGETHER from the drums.', 'drums');
   P(1, 16.5, 130, 14, 14, { h: 9, mat: 'gold', kind: 'summit' });
-  cp(1, 16.5, 127, 'Summit');
   L.bell = { pos: fr.pt(1, 16.5, 132), r: 4.5 };
   addS({ ...fr.pt(1, 20.2, 132), w: 0.5, h: 0.5, d: 0.5, mat: 'gold', vis: 'bellhang' });
   deco(11, 20, 77, 6, 125, 36, 'marble', 'cliff');
-
-  }
-  if (LV.id === 'spire') {
-  // ═════ ZONE 6 · THE STORM SPIRE ═════
-  // Harder: the wind never really stops, the footing keeps leaving, and the party is strung out
-  // across moving parts. Gaps stay inside the controller's limits — the difficulty is the timing
-  // and the drag of everyone else on the rope, not reach.
-  zone(5, 0, 0, 0, 0);
-  P(0, 0, 0, 11, 10, { col: 12 }); cp(0, 0, -2, 'Spire Base');
-  hint(-6, 6, -1, 6, -6, 6, 'The spire is exposed. Gusts run across every ledge — brace (hold E) or get blown.', 'wind');
-  L.winds.push(new O.Wind(id('wind'), fr, { x0: -9, x1: 9, y0: -3, y1: 26, z0: 6, z1: 70, dir: [-1, 0], base: 1.2, gust: 11.5, period: 4.1, len: 1.8 }));
-  // staircase of fall-away tiles, offset so you cannot simply follow the leader
-  [[0, 1.0, 8], [-1.6, 2.0, 12], [1.6, 3.0, 16], [-1.6, 4.0, 20]].forEach(([x, top, z]) => { ob(new O.FallTile(id('crumble'), fr, { at: [x, top - 0.45, z], w: 2.4, d: 2.4, delay: 0.55, back: 3.4 })); L.path.push({ zone: 5, x, top, z, w: 2.4, d: 2.4, kind: 'crumble' }); });
-  P(0, 5.0, 25, 7, 6, { col: 10 });
-  hint(-5, 5, 4, 10, 21, 29, 'Tiles drop a beat after you land. Keep moving — and do not all stand on one.', 'vanish');
-  // sweeping rotor over a narrow ring, with a brace post to ride it out
-  P(0, 5.0, 34, 9, 9, { col: 10 });
-  // sweeper kept inside the ring: a longer arm reaches past the edge and swats you mid-jump
-  // Off-centre on purpose: it rakes the left half of the ring, so there is a line through on the
-  // right — but the rope will happily drag a straggler into it.
-  ob(new O.Rotor(id('rotor'), fr, { c: [-2.8, 5.0, 34], speed: 1.45, parts: [{ w: 0.5, h: 0.5, d: 5.6, y: 0.55, hazard: 9, vis: 'sweeper', spin: 1 }, { w: 0.9, h: 2.0, d: 0.9, y: 1.05, vis: 'hub' }] }));
-  anchor(3.4, 5.0, 31); relic(-3.0, 5.0, 36);
-  hint(-6, 6, 4, 10, 30, 38, 'Clip to the post (E) and let the sweeper pass — an anchored climber holds the whole rope.', 'anchor');
-  // moving platforms over the drop, each arriving on a different beat
-  P(2, 5.4, 41.5, 2.8, 6.0, { col: 6 });   // butts against the rotor ring: cross it, don't jump it
-  ob(new O.Mover(id('mover'), fr, { a: [0, 5.7, 46], b: [0, 5.7, 52], w: 3.0, d: 3.0, period: 5.0 }));
-  L.path.push({ zone: 5, x: 0, top: 6.0, z: 50, w: 3.0, d: 3.0, kind: 'lift' });
-  ob(new O.Mover(id('mover'), fr, { a: [-3.2, 6.5, 57], b: [3.2, 6.5, 57], w: 3.0, d: 3.0, period: 4.4, phase: 0.5 }));
-  L.path.push({ zone: 5, x: 0, top: 6.8, z: 57, w: 3.0, d: 3.0, kind: 'lift' });
-  P(0, 7.4, 63, 8, 7, { col: 11 }); cp(0, 7.4, 62, 'Storm Ledge');
-  // vanishing run to the ridge
-  [[0, 8.2, 70], [-1.5, 9.0, 73.5], [1.5, 9.8, 77]].forEach(([x, top, z], k) => { ob(new O.Vanish(id('vanish'), fr, { at: [x, top - 0.3, z], w: 2.4, d: 2.4, group: k % 2, period: 4.0 })); L.path.push({ zone: 5, x, top, z, w: 2.4, d: 2.4, kind: 'vanish' }); });
-  P(0, 10.6, 83, 9, 8, { col: 12 });
-  hint(-5, 5, 9, 15, 79, 88, 'Last stretch of the spire. One of you leads, the other pays out slack.', 'chain');
-  P(0, 13.3, 91, 9, 8, { h: 5, kind: 'pullup' });
-  L.winds.push(new O.Wind(id('wind'), fr, { x0: -8, x1: 8, y0: 10, y1: 24, z0: 86, z1: 104, dir: [1, 0], base: 1, gust: 9.5, period: 3.4, len: 1.5, phase: 0.3 }));
-  P(0, 13.3, 100, 12, 11, { col: 10, kind: 'summit' }); cp(0, 13.3, 97, 'Spire Crown');
-  L.bell = { pos: fr.pt(0, 13.3, 101), r: 4.5 };
-  addS({ ...fr.pt(0, 17.0, 101), w: 0.5, h: 0.5, d: 0.5, mat: 'gold', vis: 'bellhang' });
-
-  }
-  if (LV.id === 'void') {
-  // ═════ ZONE 7 · THE VOID CAUSEWAY ═════
-  // Hardest: almost nothing to stand on. Lifts, timed doors and a lever bridge that somebody has to
-  // hold while everybody else crosses — which is exactly the fight when there are four of you.
-  zone(6, 0, 0, 0, 0);
-  P(0, 0, 0, 10, 9, { col: 12 }); cp(0, 0, -2, 'Causeway Head');
-  hint(-6, 6, -1, 6, -6, 6, 'No ground below. Everything here moves, opens or falls away.', 'time');
-  // narrow spans with timed doors in a wave
-  P(0, 0, 10, 2.6, 12, { mat: 'metal', kind: 'narrow' });
-  for (let k = 0; k < 3; k++) ob(new O.Door(id('door'), fr, { closed: [0, 1.6, 6 + 5 * k], open: [0, 4.9, 6 + 5 * k], w: 2.8, h: 3.2, d: 0.5, period: 4.2, openFor: 1.6, phase: -k * 0.2, transit: 0.5 }));
-  P(0, 0, 20, 7, 6, { col: 10 });
-  // vertical lift chain
-  ob(new O.Lift(id('elevator'), fr, { a: [0, 0.1, 26], b: [0, 4.3, 26], w: 3.4, d: 3.4, need: 2, speed: 2.4 }));
-  L.path.push({ zone: 6, x: 0, top: 4.6, z: 26, w: 3.4, d: 3.4, kind: 'vlift' });
-  P(0, 4.6, 33, 6, 6, { col: 10 }); relic(0, 4.6, 33, false);
-  // the lever bridge: one climber holds the lever, the rest cross
-  ob(new O.LeverBridge(id('lever'), fr, { levers: [[-3.4, 4.6, 36], [3.4, 4.6, 36]], inn: [0, 4.6, 39], out: [0, 4.78, 45], w: 2.4, d: 4.6 }));
-  L.path.push({ zone: 6, x: 0, top: 5.0, z: 45, w: 2.4, d: 4.6, kind: 'leverbridge' });
-  hint(-6, 6, 3, 10, 34, 42, 'Someone must hold the lever (hold E) while the others cross. Mind the rope.', 'lever');
-  P(0, 5.0, 53, 8, 7, { col: 11 }); cp(0, 5.0, 52, 'Far Span');
-  // hammers over a thin walk
-  P(0, 5.0, 62, 2.8, 12, { mat: 'metal', kind: 'narrow' });
-  for (let k = 0; k < 2; k++) ob(new O.Hammer(id('hammer'), fr, { pivot: [5.6, 9.2, 58 + 7 * k], len: 5.0, period: 2.9, phase: k * 0.5, hazard: 9 }));
-  P(0, 5.0, 71, 8, 7, { col: 11 });
-  // final swing to the bell
-  P(5.6, 6.2, 77, 7, 2.2, { h: 0.8, path: false }); anchor(1.6, 5.0, 73.5); relic(8.2, 6.2, 77, false);
-  hint(-5, 9, 4, 11, 70, 80, 'Anchor and swing the others across the gap — then jump together.', 'anchor');
-  P(0, 5.6, 88, 9, 9, { col: 10, kind: 'swingland' });
-  ob(new O.Drums(id('drums'), fr, { pads: [[-1.6, 5.6, 89.5], [1.6, 5.6, 89.5]], v: 21, fwd: [0, 0, 5.2] }));
-  hint(-4, 6, 4, 11, 84, 93, 'The last leap of the climb — JUMP TOGETHER.', 'drums');
-  P(0, 13.2, 102, 14, 14, { h: 9, mat: 'gold', kind: 'summit' });
-  L.bell = { pos: fr.pt(0, 13.2, 104), r: 4.5 };
-  addS({ ...fr.pt(0, 16.9, 104), w: 0.5, h: 0.5, d: 0.5, mat: 'gold', vis: 'bellhang' });
-  deco(10, 18, 50, 6, 100, 34, 'metal', 'cliff');
-
-  }
-
   L.summitY = L.bell.pos.y; L.startY = L.cps[0].pos.y;
   return L;
 }
